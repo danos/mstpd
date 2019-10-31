@@ -1,8 +1,13 @@
 Source: mstpd
 Section: net
 Priority: optional
-Maintainer: Vitalii Demianets <vitalii@orsoc.se>
-Build-Depends: debhelper (>=9), dh-autoreconf
+Maintainer: Vyatta Package Maintainers <DL-vyatta-help@att.com>
+Build-Depends: debhelper (>=9), dh-autoreconf,
+ autoconf-archive,
+ libczmq-dev,
+ libvplaned-dev (>= 3.2.2),
+ libjson-c-dev,
+ pkg-config,
 Standards-Version: 3.9.8
 Homepage: https://github.com/mstpd/mstpd
 Vcs-Git: https://github.com/mstpd/mstpd.git
@@ -11,6 +16,10 @@ Vcs-Browser: https://github.com/mstpd/mstpd
 Package: mstpd
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, python (>= 2.7)
+Conflicts: mstp-utils
+Replaces: mstp-utils
+Provides: mstp-utils,
+	  mstpd-pvst-filter-support,
 Description: STP/RSTP/PVST+/MSTP Spanning Tree Protocol Daemon
  This package provides a user-space daemon which replaces the STP handling that
  is built into the Linux kernel Ethernet bridge and adds support for RSTP and

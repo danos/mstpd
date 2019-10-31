@@ -1,0 +1,72 @@
+--- a/brmon.c
++++ b/brmon.c
+@@ -17,6 +17,8 @@
+ #include <stdlib.h>
+ #include <fcntl.h>
+ #include <netinet/in.h>
++#include <net/if.h>
++#include <linux/if.h>
+ #include <linux/if_bridge.h>
+ 
+ #include "log.h"
+@@ -25,25 +27,6 @@
+ #include "netif_utils.h"
+ #include "epoll_loop.h"
+ 
+-/* RFC 2863 operational status */
+-enum
+-{
+-    IF_OPER_UNKNOWN,
+-    IF_OPER_NOTPRESENT,
+-    IF_OPER_DOWN,
+-    IF_OPER_LOWERLAYERDOWN,
+-    IF_OPER_TESTING,
+-    IF_OPER_DORMANT,
+-    IF_OPER_UP,
+-};
+-
+-/* link modes */
+-enum
+-{
+-    IF_LINK_MODE_DEFAULT,
+-    IF_LINK_MODE_DORMANT, /* limit upward transition to dormant */
+-};
+-
+ static const char *port_states[] =
+ {
+     [BR_STATE_DISABLED] = "disabled",
+--- a/bridge_track.c
++++ b/bridge_track.c
+@@ -29,9 +29,8 @@
+ #include <fcntl.h>
+ #include <linux/param.h>
+ #include <netinet/in.h>
+-#include <linux/if_bridge.h>
+ #include <asm/byteorder.h>
+-#include <net/if.h>
++#include <linux/if.h>
+ #include <linux/llc.h>
+ 
+ #include "bridge_track.h"
+--- a/bridge_ctl.h
++++ b/bridge_ctl.h
+@@ -28,7 +28,8 @@
+ #define BRIDGE_CTL_H
+ 
+ #include <stdbool.h>
+-#include <net/if.h>
++#include <sys/socket.h>
++#include <linux/if.h>
+ #include <linux/if_ether.h>
+ 
+ typedef struct
+--- a/ctl_main.c
++++ b/ctl_main.c
+@@ -30,6 +30,7 @@
+ #include <errno.h>
+ #include <limits.h>
+ #include <sys/stat.h>
++#include <net/if.h>
+ 
+ #include "ctl_socket_client.h"
+ #include "log.h"

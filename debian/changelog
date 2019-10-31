@@ -1,3 +1,9 @@
+mstpd (0.0.7-git464d6c8-0vyatta4) unstable; urgency=medium
+
+  * DANOS Import master
+
+ -- Vyatta Package Maintainers <DL-vyatta-help@att.com>  Tue, 29 Oct 2019 15:55:54 +0000
+
 mstpd (0.0.6) unstable; urgency=medium
 
   * Build Debian package.

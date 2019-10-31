@@ -1,0 +1,304 @@
+--- a/driver_deps.c
++++ b/driver_deps.c
+@@ -13,20 +13,173 @@
+ #include <unistd.h>
+ #include <fcntl.h>
+ #include <asm/byteorder.h>
++#include <czmq.h>
++#include <linux/if_bridge.h>
+ 
+ #include "log.h"
+ #include "mstp.h"
++#include "vplaned_cstore.h"
++
++static zactor_t *vrouter;
++
++#define MSTP_DP_CMD_MAX 64
++#define ZMQ_TIMEOUT_MS (10 * 1000)
++#define CSTORE_TIMEOUT_MS (5 * 1000)
++
++static void vrouter_send_cstore(zmsg_t *msg)
++{
++    char *action = zmsg_popstr(msg);
++    char *path = zmsg_popstr(msg);
++    char *cfg = zmsg_popstr(msg);
++    int err;
++
++    LOG("%s: '%s'", action, cfg);
++    err = vplaned_cstore_store(path, cfg, NULL, action, CSTORE_TIMEOUT_MS);
++    if (err < 0)
++        ERROR("vplaned_cstore_store() failed: %s", strerror(-err));
++
++    zstr_free(&action);
++    zstr_free(&path);
++    zstr_free(&cfg);
++}
++
++static void vrouter_send_opmode(zmsg_t *msg)
++{
++    char *cmd = zmsg_popstr(msg);
++    zsock_t *sock = zsock_new_req(
++        "ipc:///var/run/vyatta/dataplane.control");
++
++    if (sock == NULL)
++        ERROR("failed to connect to dataplane");
++    else if (cmd == NULL)
++        ERROR("missing OPMODE command");
++    else {
++        LOG("'%s'", cmd);
++        zstr_send(sock, cmd);
++        zsock_set_rcvtimeo(sock, ZMQ_TIMEOUT_MS);
++
++        char *response = zstr_recv(sock);
++
++        if (response == NULL)
++            ERROR("no response from dataplane");
++        else if (strcmp(response, "OK") != 0)
++            ERROR("unexpected response from dataplane: %s", response);
++
++        zstr_free(&response);
++    }
++
++    zstr_free(&cmd);
++    zsock_destroy(&sock);
++}
++
++static void vrouter_thread(zsock_t *pipe, void *args)
++{
++    bool terminate = false;
++    zsock_signal(pipe, 0);
++
++    INFO("started");
++    while (!zsys_interrupted && !terminate) {
++        zmsg_t *msg = zmsg_recv(pipe);
++        if (msg == NULL)
++            continue;
++
++        char *cmd = zmsg_popstr(msg);
++
++        if (streq(cmd, "$TERM"))
++            terminate = true;
++        else if (streq(cmd, "OPMODE"))
++            vrouter_send_opmode(msg);
++        else if (streq(cmd, "CSTORE"))
++            vrouter_send_cstore(msg);
++
++        zstr_free(&cmd);
++        zmsg_destroy(&msg);
++    }
++    INFO("terminated");
++}
++
++static int vrouter_msg_cstore(const char *path, const char *cfg,
++                              const char *action)
++{
++    zmsg_t *msg = zmsg_new();
++    int rc;
++
++    if (msg == NULL) {
++        ERROR("cannot create message");
++        return -1;
++    }
++
++    zmsg_pushstr(msg, cfg);
++    zmsg_pushstr(msg, path);
++    zmsg_pushstr(msg, action);
++    zmsg_pushstr(msg, "CSTORE");
++    rc = zmsg_send(&msg, vrouter);
++    zmsg_destroy(&msg);
++    return rc;
++}
++
++static int vrouter_msg_opmode(const char *cmd)
++{
++    zmsg_t *msg = zmsg_new();
++    int rc;
++
++    if (msg == NULL) {
++        ERROR("cannot create message");
++        return -1;
++    }
++
++    zmsg_pushstr(msg, cmd);
++    zmsg_pushstr(msg, "OPMODE");
++    rc = zmsg_send(&msg, vrouter);
++    zmsg_destroy(&msg);
++    return rc;
++}
++
++static void vrouter_set_state(const bridge_t *br, const port_t *prt, __u16 mstid,
++                              int new_state, bool delete)
++{
++    char path[MSTP_DP_CMD_MAX+1];
++    char cfg[MSTP_DP_CMD_MAX+1+IFNAMSIZ*2];
++    const char *cstore_act;
++    const char *cfg_act;
++
++    if (delete) {
++        cstore_act = "DELETE";
++        cfg_act = "delete";
++    } else {
++        cstore_act = "SET";
++        cfg_act = "update";
++    }
++
++    snprintf(path, sizeof(path),
++             "mstp msti state %s %s %u", br->sysdeps.name,
++             prt->sysdeps.name, mstid);
++    snprintf(cfg, sizeof(cfg),
++             "mstp %s config action %s state %d port %s msti %u",
++             br->sysdeps.name, cfg_act, new_state, prt->sysdeps.name,
++             mstid);
++
++    if (vrouter_msg_cstore(path, cfg, cstore_act) < 0)
++        ERROR("failed to %s MSTI state: '%s'", cfg_act, cfg);
++}
+ 
+ /* Initialize driver objects & states */
+ int driver_mstp_init()
+ {
++    zsys_handler_set(NULL);
++    vrouter = zactor_new(vrouter_thread, NULL);
++    if (vrouter == NULL) {
++        ERROR("zactor_new(vrouter): '%s'", strerror(errno));
++        return -1;
++    }
++
+     return 0;
+ }
+ 
+ /* Cleanup driver objects & states */
+ void driver_mstp_fini()
+ {
+-
++    zactor_destroy(&vrouter);
+ }
+ 
+ /* Driver hook that is called before a bridge is created */
+@@ -50,9 +203,23 @@ void driver_delete_bridge(bridge_t *br)
+ /* Driver hook that is called when a port is deleted */
+ void driver_delete_port(port_t *prt)
+ {
++    bridge_t *br = prt->bridge;
++    per_tree_port_t *ptp;
+ 
+-}
++    INFO("%s", prt->sysdeps.name);
++
++    if (br->ForceProtocolVersion != protoMSTP)
++        return;
+ 
++    /*
++     * Ensure all port/MSTI state is deleted from the controller.
++     */
++    list_for_each_entry(ptp, &prt->trees, port_list) {
++        if (ptp->MSTID != 0)
++            vrouter_set_state(br, prt, __be16_to_cpu(ptp->MSTID),
++                              BR_STATE_DISABLED, true);
++     }
++}
+ 
+ /*
+  * Set new state (BR_STATE_xxx) for the given port and MSTI.
+@@ -60,28 +227,70 @@ void driver_delete_port(port_t *prt)
+  */
+ int driver_set_new_state(per_tree_port_t *ptp, int new_state)
+ {
+-    /* TODO: insert driver-specific code here */
++    port_t *prt = ptp->port;
++    bridge_t *br = prt->bridge;
++
++    if (br->bridgeEnabled &&
++        (br->ForceProtocolVersion == protoMSTP) &&
++        (ptp->MSTID != 0))
++        vrouter_set_state(br, prt, __be16_to_cpu(ptp->MSTID),
++                          new_state, false);
++
+     return new_state;
+ }
+ 
+ bool driver_create_msti(bridge_t *br, __u16 mstid)
+ {
+     /* TODO: send "create msti" command to driver */
++    INFO("%s:%u", br->sysdeps.name, mstid);
+     return true;
+ }
+ 
+ bool driver_delete_msti(bridge_t *br, __u16 mstid)
+ {
++    port_t *prt;
++    per_tree_port_t *ptp;
++
++    INFO("%s:%u", br->sysdeps.name, mstid);
++
++    /*
++     * Ensure the current switch/port/msti state is removed from the
++     * controller (at this stage the dataplane doesn't care about the
++     * state)
++     */
++    list_for_each_entry(prt, &br->ports, br_list) {
++        list_for_each_entry(ptp, &prt->trees, port_list) {
++            if (__be16_to_cpu(ptp->MSTID) == mstid)
++                vrouter_set_state(br, prt, mstid, BR_STATE_DISABLED, true);
++        }
++    }
++
+     /* TODO: send "delete msti" command to driver */
+     return true;
+ }
+ 
++/*
++ * Flush dataplane forwarding database in a background thread.
++ */
+ void driver_flush_all_fids(per_tree_port_t *ptp)
+ {
+-    /* TODO: do real flushing.
+-     * Make it asynchronous, with completion function calling
+-     * MSTP_IN_all_fids_flushed(ptp)
+-     */
++    port_t *prt = ptp->port;
++    bridge_t *br = prt->bridge;
++    char cmd[MSTP_DP_CMD_MAX+1+IFNAMSIZ*2];
++
++    cmd[0] = 0;
++    if (ptp->MSTID == 0)
++        snprintf(cmd, sizeof(cmd), "bridge %s macs clear port %s",
++                 br->sysdeps.name, prt->sysdeps.name);
++    else if (br->ForceProtocolVersion == protoMSTP)
++        snprintf(cmd, sizeof(cmd), "mstp-op %s clear macs port %s msti %u",
++                 br->sysdeps.name, prt->sysdeps.name,
++                 __be16_to_cpu(ptp->MSTID));
++
++    if (cmd[0] != 0)
++	if (vrouter_msg_opmode(cmd) < 0)
++	    ERROR("failed to flush bridge: '%s'", cmd);
++
+     MSTP_IN_all_fids_flushed(ptp);
+ }
+ 
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -30,6 +30,10 @@ configbridgefile=$(utilsdir)/mstp_config
+ ifqueryfile=$(utilsdir)/ifquery
+ 
+ mstpd_CFLAGS += -DMSTPD_PID_FILE='"$(mstpdpidfile)"'
++mstpd_CFLAGS += $(LIBCZMQ_CFLAGS)
++mstpd_CFLAGS += $(LIBVPLANED_CFLAGS)
++mstpd_LDADD = $(LIBCZMQ_LIBS)
++mstpd_LDADD += $(LIBVPLANED_LIBS) $(JSON_C_LIBS)
+ 
+ # See https://www.gnu.org/savannah-checkouts/gnu/autoconf/manual/autoconf-2.69/html_node/Installation-Directory-Variables.html#index-sysconfdir-188
+ populate_template = sed \
+--- a/configure.ac
++++ b/configure.ac
+@@ -72,6 +72,10 @@ AC_SEARCH_LIBS([clock_gettime], [rt])
+ AC_CHECK_TYPES(struct timespec)
+ AC_CHECK_FUNCS(clock_gettime)
+ 
++PKG_CHECK_MODULES(LIBCZMQ, [libczmq >= 3.0.2])
++PKG_CHECK_MODULES(LIBVPLANED, [libvplaned])
++PKG_CHECK_MODULES(JSON_C, [json-c])
++
+ AC_CONFIG_HEADERS([config.h])
+ AC_CONFIG_FILES([Makefile])
+ 
