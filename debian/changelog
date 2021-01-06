@@ -1,3 +1,10 @@
+mstpd (0.0.7-git464d6c8-0vyatta5) unstable; urgency=medium
+
+  [ Mark Gillott ]
+  * Convert from python2 to python3 (Fixes: VRVDR-51516)
+
+ -- Charles (Chas) Williams <ciwillia@vyatta.att-mail.com>  Wed, 06 Jan 2021 10:07:46 -0500
+
 mstpd (0.0.7-git464d6c8-0vyatta4) unstable; urgency=medium
 
   * DANOS Import master
