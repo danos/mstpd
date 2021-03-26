@@ -91,7 +91,7 @@ index 968e15b..2f23923 100644
               INFO("ifindex %d, len %d, %02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
                    if_index, len,
 diff --git a/bridge_track.h b/bridge_track.h
-index d3aec99..64c32e4 100644
+index d3aec99..b32d543 100644
 --- a/bridge_track.h
 +++ b/bridge_track.h
 @@ -21,6 +21,10 @@
@@ -100,7 +100,7 @@ index d3aec99..64c32e4 100644
  
 +#include <net/ethernet.h>
 +
-+const struct ether_addr pvst_group_address;
++extern const struct ether_addr pvst_group_address;
 +
  int bridge_track_fini(void);
  
