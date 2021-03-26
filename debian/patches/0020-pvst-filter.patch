@@ -1,3 +1,21 @@
+From: Vyatta Package Maintainers <DL-vyatta-help@att.com>
+Date: Tue, 23 Mar 2021 14:25:52 +0000
+Subject: pvst-filter
+
+---
+ bridge_track.c        | 50 ++++++++++++++++++++++++++++++++++
+ bridge_track.h        |  4 +++
+ ctl_main.c            | 49 ++++++++++++++++++++++++++++++++++
+ main.c                |  2 +-
+ mstp.c                | 74 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ mstp.h                | 17 ++++++++++++
+ packet.c              | 54 ++++++++++++++++++++++++++++++++-----
+ packet.h              |  4 +++
+ utils/bash_completion |  8 +++---
+ 9 files changed, 252 insertions(+), 10 deletions(-)
+
+diff --git a/bridge_track.c b/bridge_track.c
+index 968e15b..2f23923 100644
 --- a/bridge_track.c
 +++ b/bridge_track.c
 @@ -31,7 +31,10 @@
@@ -11,7 +29,7 @@
  #include "bridge_ctl.h"
  #include "ctl_functions.h"
  #include "netif_utils.h"
-@@ -368,6 +371,47 @@ static const __u8 bridge_group_address[E
+@@ -368,6 +371,47 @@ static const __u8 bridge_group_address[ETH_ALEN] =
      0x01, 0x80, 0xc2, 0x00, 0x00, 0x00
  };
  
@@ -59,7 +77,7 @@
  void bridge_bpdu_rcv(int if_index, const unsigned char *data, int len)
  {
      port_t *prt = NULL;
-@@ -395,6 +439,12 @@ void bridge_bpdu_rcv(int if_index, const
+@@ -395,6 +439,12 @@ void bridge_bpdu_rcv(int if_index, const unsigned char *data, int len)
      unsigned int l;
      TST(len > sizeof(struct llc_header),);
      h = (struct llc_header *)data;
@@ -72,6 +90,345 @@
      TST(0 == memcmp(h->dest_addr, bridge_group_address, ETH_ALEN),
               INFO("ifindex %d, len %d, %02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
                    if_index, len,
+diff --git a/bridge_track.h b/bridge_track.h
+index d3aec99..64c32e4 100644
+--- a/bridge_track.h
++++ b/bridge_track.h
+@@ -21,6 +21,10 @@
+ #ifndef MSTPD_BRIDGE_TRACK_H
+ #define MSTPD_BRIDGE_TRACK_H
+ 
++#include <net/ethernet.h>
++
++const struct ether_addr pvst_group_address;
++
+ int bridge_track_fini(void);
+ 
+ #endif
+diff --git a/ctl_main.c b/ctl_main.c
+index ac77584..771d59e 100644
+--- a/ctl_main.c
++++ b/ctl_main.c
+@@ -173,6 +173,9 @@ typedef enum {
+     PARAM_SENDRSTP,
+     PARAM_RCVDTCACK,
+     PARAM_RCVDTCN,
++    PARAM_PVSTFILTERPORT,
++    PARAM_PVSTGUARDPORT,
++    PARAM_PVSTGUARDERROR,
+ } param_id_t;
+ 
+ typedef struct {
+@@ -721,6 +724,9 @@ static const cmd_param_t cist_port_params[] = {
+     { PARAM_SENDRSTP,       "send-rstp" },
+     { PARAM_RCVDTCACK,      "received-tc-ack" },
+     { PARAM_RCVDTCN,        "received-tcn" },
++    { PARAM_PVSTFILTERPORT, "pvst-filter-port" },
++    { PARAM_PVSTGUARDPORT,  "pvst-guard-port" },
++    { PARAM_PVSTGUARDERROR, "pvst-guard-error" },
+ };
+ 
+ static int detail = 0;
+@@ -781,6 +787,10 @@ static int do_showport_fmt_plain(const CIST_PortStatus *s,
+                        BOOL_STR(s->bpdu_guard_port));
+                 printf("bpdu guard error     %s\n",
+                        BOOL_STR(s->bpdu_guard_error));
++                printf("  pvst guard port    %-23s ",
++                       BOOL_STR(s->pvst_guard_port));
++                printf("pvst guard error     %s\n",
++                       BOOL_STR(s->pvst_guard_error));
+                 printf("  network port       %-23s ",
+                        BOOL_STR(s->network_port));
+                 printf("BA inconsistent      %s\n",
+@@ -788,6 +798,9 @@ static int do_showport_fmt_plain(const CIST_PortStatus *s,
+                 printf("  bpdu filter port   %-23s ",
+                        BOOL_STR(s->bpdu_filter_port));
+                 printf("Num RX BPDU Filtered %u\n", s->num_rx_bpdu_filtered);
++                printf("  pvst filter port   %-23s ",
++                       BOOL_STR(s->pvst_filter_port));
++                printf("Num RX PVST Filtered %u\n", s->num_rx_pvst_filtered);
+                 printf("  Num TX BPDU        %-23u ", s->num_tx_bpdu);
+                 printf("Num TX TCN           %u\n", s->num_tx_tcn);
+                 printf("  Num RX BPDU        %-23u ", s->num_rx_bpdu);
+@@ -800,6 +813,7 @@ static int do_showport_fmt_plain(const CIST_PortStatus *s,
+                 printf("Send RSTP            %s\n", BOOL_STR(s->sendRSTP));
+                 printf("  Rcvd TC Ack        %-23s ", BOOL_STR(s->rcvdTcAck));
+                 printf("Rcvd TCN             %s\n", BOOL_STR(s->rcvdTcn));
++                printf("  Num RX PVST        %-23u\n", s->num_rx_pvst);
+             }
+             else
+             {
+@@ -942,6 +956,15 @@ static int do_showport_fmt_plain(const CIST_PortStatus *s,
+         case PARAM_RCVDTCN:
+             printf("%s\n", BOOL_STR(s->rcvdTcn));
+             break;
++        case PARAM_PVSTFILTERPORT:
++            printf("%s\n", BOOL_STR(s->pvst_filter_port));
++            break;
++        case PARAM_PVSTGUARDPORT:
++            printf("%s\n", BOOL_STR(s->pvst_guard_port));
++            break;
++        case PARAM_PVSTGUARDERROR:
++            printf("%s\n", BOOL_STR(s->pvst_guard_error));
++            break;
+         default:
+             return -2; /* -2 = unknown param */
+     }
+@@ -1669,6 +1692,28 @@ static int cmd_setportbpdufilter(int argc, char *const *argv)
+     return set_port_cfg(bpdu_filter_port, getyesno(argv[3], "yes", "no"));
+ }
+ 
++static int cmd_setportpvstfilter(int argc, char *const *argv)
++{
++    int br_index = get_index(argv[1], "bridge");
++    if(0 > br_index)
++        return br_index;
++    int port_index = get_index(argv[2], "port");
++    if(0 > port_index)
++        return port_index;
++    return set_port_cfg(pvst_filter_port, getyesno(argv[3], "yes", "no"));
++}
++
++static int cmd_setportpvstguard(int argc, char *const *argv)
++{
++    int br_index = get_index(argv[1], "bridge");
++    if(0 > br_index)
++        return br_index;
++    int port_index = get_index(argv[2], "port");
++    if(0 > port_index)
++        return port_index;
++    return set_port_cfg(pvst_guard_port, getyesno(argv[3], "yes", "no"));
++}
++
+ static int cmd_setportnetwork(int argc, char *const *argv)
+ {
+     int br_index = get_index(argv[1], "bridge");
+@@ -2274,6 +2319,10 @@ static const struct command commands[] =
+      "<bridge> <port> {yes|no}", "Disable/Enable sending BPDU"},
+     {3, 0, "setportbpdufilter", cmd_setportbpdufilter,
+      "<bridge> <port> {yes|no}", "Set BPDU filter state"},
++    {3, 0, "setportpvstfilter", cmd_setportpvstfilter,
++     "<bridge> <port> {yes|no}", "Set PVST filter state"},
++    {3, 0, "setpvstguard", cmd_setportpvstguard,
++     "<bridge> <port> {yes|no}", "Set PVST guard state"},
+ 
+     /* Other */
+     {1, 0, "debuglevel", cmd_debuglevel, "<level>", "Level of verbosity"},
+diff --git a/main.c b/main.c
+index 1c9546c..18a824b 100644
+--- a/main.c
++++ b/main.c
+@@ -38,12 +38,12 @@
+ #include "epoll_loop.h"
+ #include "bridge_ctl.h"
+ #include "netif_utils.h"
+-#include "packet.h"
+ #include "log.h"
+ #include "mstp.h"
+ #include "ctl_socket_server.h"
+ #include "driver.h"
+ #include "bridge_track.h"
++#include "packet.h"
+ 
+ #define APP_NAME    "mstpd"
+ 
+diff --git a/mstp.c b/mstp.c
+index b74ec7e..5b7cd17 100644
+--- a/mstp.c
++++ b/mstp.c
+@@ -46,6 +46,8 @@
+ #include "log.h"
+ #include "driver.h"
+ #include "clock_gettime.h"
++#include "packet.h"
++#include "bridge_track.h"
+ 
+ static void PTSM_tick(port_t *prt);
+ static bool TCSM_run(per_tree_port_t *ptp, bool dry_run);
+@@ -130,6 +132,8 @@ static void port_default_internal_vars(port_t *prt)
+     assign(prt->brAssuRcvdInfoWhile, 0u);
+     prt->BaInconsistent = false;
+     prt->num_rx_bpdu_filtered = 0;
++    prt->num_rx_pvst_filtered = 0;
++    prt->num_rx_pvst = 0;
+     prt->num_rx_bpdu = 0;
+     prt->num_rx_tcn = 0;
+     prt->num_tx_bpdu = 0;
+@@ -299,9 +303,12 @@ bool MSTP_IN_port_create_and_add_tail(port_t *prt, __u16 portno)
+     prt->AutoEdge = true;       /* 13.25 */
+     prt->BpduGuardPort = false;
+     prt->BpduGuardError = false;
++    prt->pvstGuardPort = false;
++    prt->pvstGuardError = false;
+     prt->NetworkPort = false;
+     prt->dontTxmtBpdu = false;
+     prt->bpduFilterPort = false;
++    prt->pvstFilterPort = false;
+     prt->deleted = false;
+ 
+     port_default_internal_vars(prt);
+@@ -501,8 +508,11 @@ void MSTP_IN_set_port_enable(port_t *prt, bool up, int speed, int duplex)
+         {
+             prt->portEnabled = true;
+             prt->BpduGuardError = false;
++            prt->pvstGuardError = false;
+             prt->BaInconsistent = false;
+             prt->num_rx_bpdu_filtered = 0;
++            prt->num_rx_pvst_filtered = 0;
++            prt->num_rx_pvst = 0;
+             prt->num_rx_bpdu = 0;
+             prt->num_rx_tcn = 0;
+             prt->num_tx_bpdu = 0;
+@@ -572,6 +582,36 @@ void MSTP_IN_all_fids_flushed(per_tree_port_t *ptp)
+     }
+ }
+ 
++void MSTP_IN_rx_pvst(port_t *prt, bpdu_t *bpdu, int size)
++{
++    bridge_t *br = prt->bridge;
++
++    ++(prt->num_rx_pvst);
++
++    if(prt->pvstGuardPort)
++    {
++        prt->pvstGuardError = true;
++        ERROR_PRTNAME(br, prt,
++                     "Received PVST BPDU on Guarded Port - Port Down");
++        MSTP_OUT_shutdown_port(prt);
++        return;
++    }
++
++    if(prt->pvstFilterPort)
++    {
++        LOG_PRTNAME(br, prt,
++                   "Received PVST BPDU on Filtered Port - discarded");
++        ++(prt->num_rx_pvst_filtered);
++        return;
++    }
++
++    if(!br->bridgeEnabled)
++    {
++        INFO_PRTNAME(br, prt, "Received PVST BPDU while bridge is disabled");
++        return;
++    }
++}
++
+ /* NOTE: bpdu pointer is unaligned, but it works because
+  * bpdu_t is packed. Don't try to cast bpdu to non-packed type ;)
+  */
+@@ -1032,10 +1072,15 @@ void MSTP_IN_get_cist_port_status(port_t *prt, CIST_PortStatus *status)
+     assign(status->internal_port_path_cost, cist->InternalPortPathCost);
+     status->bpdu_guard_port = prt->BpduGuardPort;
+     status->bpdu_guard_error = prt->BpduGuardError;
++    status->pvst_guard_port = prt->pvstGuardPort;
++    status->pvst_guard_error = prt->pvstGuardError;
+     status->network_port = prt->NetworkPort;
+     status->ba_inconsistent = prt->BaInconsistent;
+     status->bpdu_filter_port = prt->bpduFilterPort;
++    status->pvst_filter_port = prt->pvstFilterPort;
+     status->num_rx_bpdu_filtered = prt->num_rx_bpdu_filtered;
++    status->num_rx_pvst_filtered = prt->num_rx_pvst_filtered;
++    status->num_rx_pvst = prt->num_rx_pvst;
+     status->num_rx_bpdu = prt->num_rx_bpdu;
+     status->num_rx_tcn = prt->num_rx_tcn;
+     status->num_tx_bpdu = prt->num_tx_bpdu;
+@@ -1219,6 +1264,35 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
+         }
+     }
+ 
++    if(cfg->set_pvst_filter_port)
++    {
++        if(prt->pvstFilterPort != cfg->pvst_filter_port)
++        {
++            prt->pvstFilterPort = cfg->pvst_filter_port;
++            prt->num_rx_pvst_filtered = 0;
++            INFO_PRTNAME(br, prt,"pvstFilterPort new=%d", prt->pvstFilterPort);
++
++            if(prt->pvstFilterPort && !prt->pvstGuardPort)
++                packet_sock_mcast_add(prt, &pvst_group_address);
++            else if(!prt->pvstFilterPort && !prt->pvstGuardPort)
++                packet_sock_mcast_del(prt, &pvst_group_address);
++        }
++    }
++
++    if(cfg->set_pvst_guard_port)
++    {
++        if(prt->pvstGuardPort != cfg->pvst_guard_port)
++        {
++            prt->pvstGuardPort = cfg->pvst_guard_port;
++            INFO_PRTNAME(br, prt,"pvstGuardPort new=%d", prt->pvstGuardPort);
++
++            if(!prt->pvstFilterPort && prt->pvstGuardPort)
++                packet_sock_mcast_add(prt, &pvst_group_address);
++            else if(!prt->pvstFilterPort && !prt->pvstGuardPort)
++                packet_sock_mcast_del(prt, &pvst_group_address);
++        }
++    }
++
+     if(changed && prt->portEnabled)
+         br_state_machines_run(prt->bridge);
+ 
+diff --git a/mstp.h b/mstp.h
+index 983fd55..2b5c4bb 100644
+--- a/mstp.h
++++ b/mstp.h
+@@ -478,6 +478,9 @@ typedef struct
+     bool BaInconsistent;
+     bool dontTxmtBpdu;
+     bool bpduFilterPort;
++    bool pvstFilterPort;
++    bool pvstGuardPort;
++    bool pvstGuardError;
+ 
+     unsigned int rapidAgeingWhile;
+     unsigned int brAssuRcvdInfoWhile;
+@@ -496,6 +499,8 @@ typedef struct
+ 
+     sysdep_if_data_t sysdeps;
+     unsigned int num_rx_bpdu_filtered;
++    unsigned int num_rx_pvst_filtered;
++    unsigned int num_rx_pvst;
+     unsigned int num_rx_bpdu;
+     unsigned int num_rx_tcn;
+     unsigned int num_tx_bpdu;
+@@ -572,6 +577,7 @@ void MSTP_IN_set_port_enable(port_t *prt, bool up, int speed, int duplex);
+ void MSTP_IN_one_second(bridge_t *br);
+ void MSTP_IN_all_fids_flushed(per_tree_port_t *ptp);
+ void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size);
++void MSTP_IN_rx_pvst(port_t *prt, bpdu_t *bpdu, int size);
+ 
+ bool MSTP_IN_set_vid2fid(bridge_t *br, __u16 vid, __u16 fid);
+ bool MSTP_IN_set_all_vids2fids(bridge_t *br, __u16 *vids2fids);
+@@ -703,9 +709,14 @@ typedef struct
+     bool bpdu_guard_port;
+     bool bpdu_guard_error;
+     bool bpdu_filter_port;
++    bool pvst_filter_port;
++    bool pvst_guard_port;
++    bool pvst_guard_error;
+     bool network_port;
+     bool ba_inconsistent;
+     unsigned int num_rx_bpdu_filtered;
++    unsigned int num_rx_pvst_filtered;
++    unsigned int num_rx_pvst;
+     unsigned int num_rx_bpdu;
+     unsigned int num_rx_tcn;
+     unsigned int num_tx_bpdu;
+@@ -781,6 +792,12 @@ typedef struct
+ 
+     bool bpdu_filter_port;
+     bool set_bpdu_filter_port;
++
++    bool pvst_filter_port;
++    bool set_pvst_filter_port;
++
++    bool pvst_guard_port;
++    bool set_pvst_guard_port;
+ } CIST_PortConfig;
+ 
+ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg);
+diff --git a/packet.c b/packet.c
+index c1d4ff5..886b035 100644
 --- a/packet.c
 +++ b/packet.c
 @@ -33,7 +33,9 @@
@@ -84,7 +441,7 @@
  #include "epoll_loop.h"
  #include "netif_utils.h"
  #include "bridge_ctl.h"
-@@ -135,15 +137,19 @@ static void packet_rcv(uint32_t events,
+@@ -135,15 +137,19 @@ static void packet_rcv(uint32_t events, struct epoll_event_handler *h)
      bridge_bpdu_rcv(sl.sll_ifindex, buf, cc);
  }
  
@@ -158,334 +515,25 @@
 +                ether_ntoa(mcaddr));
 +    return 0;
 +}
---- a/mstp.h
-+++ b/mstp.h
-@@ -478,6 +478,9 @@ typedef struct
-     bool BaInconsistent;
-     bool dontTxmtBpdu;
-     bool bpduFilterPort;
-+    bool pvstFilterPort;
-+    bool pvstGuardPort;
-+    bool pvstGuardError;
+diff --git a/packet.h b/packet.h
+index 8d2e0ff..50380c5 100644
+--- a/packet.h
++++ b/packet.h
+@@ -26,8 +26,12 @@
+ #define PACKET_SOCK_H
  
-     unsigned int rapidAgeingWhile;
-     unsigned int brAssuRcvdInfoWhile;
-@@ -496,6 +499,8 @@ typedef struct
+ #include <sys/uio.h>
++#include <net/ethernet.h>
  
-     sysdep_if_data_t sysdeps;
-     unsigned int num_rx_bpdu_filtered;
-+    unsigned int num_rx_pvst_filtered;
-+    unsigned int num_rx_pvst;
-     unsigned int num_rx_bpdu;
-     unsigned int num_rx_tcn;
-     unsigned int num_tx_bpdu;
-@@ -572,6 +577,7 @@ void MSTP_IN_set_port_enable(port_t *prt
- void MSTP_IN_one_second(bridge_t *br);
- void MSTP_IN_all_fids_flushed(per_tree_port_t *ptp);
- void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size);
-+void MSTP_IN_rx_pvst(port_t *prt, bpdu_t *bpdu, int size);
+ void packet_send(int ifindex, const struct iovec *iov, int iov_count, int len);
+ int packet_sock_init(void);
  
- bool MSTP_IN_set_vid2fid(bridge_t *br, __u16 vid, __u16 fid);
- bool MSTP_IN_set_all_vids2fids(bridge_t *br, __u16 *vids2fids);
-@@ -703,9 +709,14 @@ typedef struct
-     bool bpdu_guard_port;
-     bool bpdu_guard_error;
-     bool bpdu_filter_port;
-+    bool pvst_filter_port;
-+    bool pvst_guard_port;
-+    bool pvst_guard_error;
-     bool network_port;
-     bool ba_inconsistent;
-     unsigned int num_rx_bpdu_filtered;
-+    unsigned int num_rx_pvst_filtered;
-+    unsigned int num_rx_pvst;
-     unsigned int num_rx_bpdu;
-     unsigned int num_rx_tcn;
-     unsigned int num_tx_bpdu;
-@@ -781,6 +792,12 @@ typedef struct
- 
-     bool bpdu_filter_port;
-     bool set_bpdu_filter_port;
++void packet_sock_mcast_del(const port_t *prt, const struct ether_addr *mcaddr);
++int packet_sock_mcast_add(const port_t *prt, const struct ether_addr *mcaddr);
 +
-+    bool pvst_filter_port;
-+    bool set_pvst_filter_port;
-+
-+    bool pvst_guard_port;
-+    bool set_pvst_guard_port;
- } CIST_PortConfig;
- 
- int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg);
---- a/mstp.c
-+++ b/mstp.c
-@@ -46,6 +46,8 @@
- #include "log.h"
- #include "driver.h"
- #include "clock_gettime.h"
-+#include "packet.h"
-+#include "bridge_track.h"
- 
- static void PTSM_tick(port_t *prt);
- static bool TCSM_run(per_tree_port_t *ptp, bool dry_run);
-@@ -130,6 +132,8 @@ static void port_default_internal_vars(p
-     assign(prt->brAssuRcvdInfoWhile, 0u);
-     prt->BaInconsistent = false;
-     prt->num_rx_bpdu_filtered = 0;
-+    prt->num_rx_pvst_filtered = 0;
-+    prt->num_rx_pvst = 0;
-     prt->num_rx_bpdu = 0;
-     prt->num_rx_tcn = 0;
-     prt->num_tx_bpdu = 0;
-@@ -299,9 +303,12 @@ bool MSTP_IN_port_create_and_add_tail(po
-     prt->AutoEdge = true;       /* 13.25 */
-     prt->BpduGuardPort = false;
-     prt->BpduGuardError = false;
-+    prt->pvstGuardPort = false;
-+    prt->pvstGuardError = false;
-     prt->NetworkPort = false;
-     prt->dontTxmtBpdu = false;
-     prt->bpduFilterPort = false;
-+    prt->pvstFilterPort = false;
-     prt->deleted = false;
- 
-     port_default_internal_vars(prt);
-@@ -501,8 +508,11 @@ void MSTP_IN_set_port_enable(port_t *prt
-         {
-             prt->portEnabled = true;
-             prt->BpduGuardError = false;
-+            prt->pvstGuardError = false;
-             prt->BaInconsistent = false;
-             prt->num_rx_bpdu_filtered = 0;
-+            prt->num_rx_pvst_filtered = 0;
-+            prt->num_rx_pvst = 0;
-             prt->num_rx_bpdu = 0;
-             prt->num_rx_tcn = 0;
-             prt->num_tx_bpdu = 0;
-@@ -572,21 +582,43 @@ void MSTP_IN_all_fids_flushed(per_tree_p
-     }
- }
- 
--/* NOTE: bpdu pointer is unaligned, but it works because
-- * bpdu_t is packed. Don't try to cast bpdu to non-packed type ;)
-- */
--void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size)
-+void MSTP_IN_rx_pvst(port_t *prt, bpdu_t *bpdu, int size)
- {
--    int mstis_size;
-     bridge_t *br = prt->bridge;
- 
--    if(prt->bpduFilterPort)
-+    ++(prt->num_rx_pvst);
-+
-+    if(prt->pvstGuardPort)
-+    {
-+        prt->pvstGuardError = true;
-+        ERROR_PRTNAME(br, prt,
-+                     "Received PVST BPDU on Guarded Port - Port Down");
-+        MSTP_OUT_shutdown_port(prt);
-+        return;
-+    }
-+
-+    if(prt->pvstFilterPort)
-     {
-         LOG_PRTNAME(br, prt,
--                   "Received BPDU on BPDU Filtered Port - discarded");
--        ++(prt->num_rx_bpdu_filtered);
-+                   "Received PVST BPDU on Filtered Port - discarded");
-+        ++(prt->num_rx_pvst_filtered);
-+        return;
-+    }
-+
-+    if(!br->bridgeEnabled)
-+    {
-+        INFO_PRTNAME(br, prt, "Received PVST BPDU while bridge is disabled");
-         return;
-     }
-+}
-+
-+/* NOTE: bpdu pointer is unaligned, but it works because
-+ * bpdu_t is packed. Don't try to cast bpdu to non-packed type ;)
-+ */
-+void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size)
-+{
-+    int mstis_size;
-+    bridge_t *br = prt->bridge;
- 
-     ++(prt->num_rx_bpdu);
- 
-@@ -599,6 +631,14 @@ void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t
-         return;
-     }
- 
-+    if(prt->bpduFilterPort)
-+    {
-+        LOG_PRTNAME(br, prt,
-+                   "Received BPDU on BPDU Filtered Port - discarded");
-+        ++(prt->num_rx_bpdu_filtered);
-+        return;
-+    }
-+
-     if(!br->bridgeEnabled)
-     {
-         INFO_PRTNAME(br, prt, "Received BPDU while bridge is disabled");
-@@ -1032,10 +1072,15 @@ void MSTP_IN_get_cist_port_status(port_t
-     assign(status->internal_port_path_cost, cist->InternalPortPathCost);
-     status->bpdu_guard_port = prt->BpduGuardPort;
-     status->bpdu_guard_error = prt->BpduGuardError;
-+    status->pvst_guard_port = prt->pvstGuardPort;
-+    status->pvst_guard_error = prt->pvstGuardError;
-     status->network_port = prt->NetworkPort;
-     status->ba_inconsistent = prt->BaInconsistent;
-     status->bpdu_filter_port = prt->bpduFilterPort;
-+    status->pvst_filter_port = prt->pvstFilterPort;
-     status->num_rx_bpdu_filtered = prt->num_rx_bpdu_filtered;
-+    status->num_rx_pvst_filtered = prt->num_rx_pvst_filtered;
-+    status->num_rx_pvst = prt->num_rx_pvst;
-     status->num_rx_bpdu = prt->num_rx_bpdu;
-     status->num_rx_tcn = prt->num_rx_tcn;
-     status->num_tx_bpdu = prt->num_tx_bpdu;
-@@ -1219,6 +1264,35 @@ int MSTP_IN_set_cist_port_config(port_t
-         }
-     }
- 
-+    if(cfg->set_pvst_filter_port)
-+    {
-+        if(prt->pvstFilterPort != cfg->pvst_filter_port)
-+        {
-+            prt->pvstFilterPort = cfg->pvst_filter_port;
-+            prt->num_rx_pvst_filtered = 0;
-+            INFO_PRTNAME(br, prt,"pvstFilterPort new=%d", prt->pvstFilterPort);
-+
-+            if(prt->pvstFilterPort && !prt->pvstGuardPort)
-+                packet_sock_mcast_add(prt, &pvst_group_address);
-+            else if(!prt->pvstFilterPort && !prt->pvstGuardPort)
-+                packet_sock_mcast_del(prt, &pvst_group_address);
-+        }
-+    }
-+
-+    if(cfg->set_pvst_guard_port)
-+    {
-+        if(prt->pvstGuardPort != cfg->pvst_guard_port)
-+        {
-+            prt->pvstGuardPort = cfg->pvst_guard_port;
-+            INFO_PRTNAME(br, prt,"pvstGuardPort new=%d", prt->pvstGuardPort);
-+
-+            if(!prt->pvstFilterPort && prt->pvstGuardPort)
-+                packet_sock_mcast_add(prt, &pvst_group_address);
-+            else if(!prt->pvstFilterPort && !prt->pvstGuardPort)
-+                packet_sock_mcast_del(prt, &pvst_group_address);
-+        }
-+    }
-+
-     if(changed && prt->portEnabled)
-         br_state_machines_run(prt->bridge);
- 
---- a/ctl_main.c
-+++ b/ctl_main.c
-@@ -172,6 +172,9 @@ typedef enum {
-     PARAM_SENDRSTP,
-     PARAM_RCVDTCACK,
-     PARAM_RCVDTCN,
-+    PARAM_PVSTFILTERPORT,
-+    PARAM_PVSTGUARDPORT,
-+    PARAM_PVSTGUARDERROR,
- } param_id_t;
- 
- typedef struct {
-@@ -719,6 +722,9 @@ static const cmd_param_t cist_port_param
-     { PARAM_SENDRSTP,       "send-rstp" },
-     { PARAM_RCVDTCACK,      "received-tc-ack" },
-     { PARAM_RCVDTCN,        "received-tcn" },
-+    { PARAM_PVSTFILTERPORT, "pvst-filter-port" },
-+    { PARAM_PVSTGUARDPORT,  "pvst-guard-port" },
-+    { PARAM_PVSTGUARDERROR, "pvst-guard-error" },
- };
- 
- static int detail = 0;
-@@ -779,6 +785,10 @@ static int do_showport_fmt_plain(const C
-                        BOOL_STR(s->bpdu_guard_port));
-                 printf("bpdu guard error     %s\n",
-                        BOOL_STR(s->bpdu_guard_error));
-+                printf("  pvst guard port    %-23s ",
-+                       BOOL_STR(s->pvst_guard_port));
-+                printf("pvst guard error     %s\n",
-+                       BOOL_STR(s->pvst_guard_error));
-                 printf("  network port       %-23s ",
-                        BOOL_STR(s->network_port));
-                 printf("BA inconsistent      %s\n",
-@@ -786,6 +796,9 @@ static int do_showport_fmt_plain(const C
-                 printf("  bpdu filter port   %-23s ",
-                        BOOL_STR(s->bpdu_filter_port));
-                 printf("Num RX BPDU Filtered %u\n", s->num_rx_bpdu_filtered);
-+                printf("  pvst filter port   %-23s ",
-+                       BOOL_STR(s->pvst_filter_port));
-+                printf("Num RX PVST Filtered %u\n", s->num_rx_pvst_filtered);
-                 printf("  Num TX BPDU        %-23u ", s->num_tx_bpdu);
-                 printf("Num TX TCN           %u\n", s->num_tx_tcn);
-                 printf("  Num RX BPDU        %-23u ", s->num_rx_bpdu);
-@@ -798,6 +811,7 @@ static int do_showport_fmt_plain(const C
-                 printf("Send RSTP            %s\n", BOOL_STR(s->sendRSTP));
-                 printf("  Rcvd TC Ack        %-23s ", BOOL_STR(s->rcvdTcAck));
-                 printf("Rcvd TCN             %s\n", BOOL_STR(s->rcvdTcn));
-+                printf("  Num RX PVST        %-23u\n", s->num_rx_pvst);
-             }
-             else
-             {
-@@ -937,6 +951,15 @@ static int do_showport_fmt_plain(const C
-         case PARAM_RCVDTCN:
-             printf("%s\n", BOOL_STR(s->rcvdTcn));
-             break;
-+        case PARAM_PVSTFILTERPORT:
-+            printf("%s\n", BOOL_STR(s->pvst_filter_port));
-+            break;
-+        case PARAM_PVSTGUARDPORT:
-+            printf("%s\n", BOOL_STR(s->pvst_guard_port));
-+            break;
-+        case PARAM_PVSTGUARDERROR:
-+            printf("%s\n", BOOL_STR(s->pvst_guard_error));
-+            break;
-         default:
-             return -2; /* -2 = unknown param */
-     }
-@@ -1659,6 +1682,28 @@ static int cmd_setportbpdufilter(int arg
-     return set_port_cfg(bpdu_filter_port, getyesno(argv[3], "yes", "no"));
- }
- 
-+static int cmd_setportpvstfilter(int argc, char *const *argv)
-+{
-+    int br_index = get_index(argv[1], "bridge");
-+    if(0 > br_index)
-+        return br_index;
-+    int port_index = get_index(argv[2], "port");
-+    if(0 > port_index)
-+        return port_index;
-+    return set_port_cfg(pvst_filter_port, getyesno(argv[3], "yes", "no"));
-+}
-+
-+static int cmd_setportpvstguard(int argc, char *const *argv)
-+{
-+    int br_index = get_index(argv[1], "bridge");
-+    if(0 > br_index)
-+        return br_index;
-+    int port_index = get_index(argv[2], "port");
-+    if(0 > port_index)
-+        return port_index;
-+    return set_port_cfg(pvst_guard_port, getyesno(argv[3], "yes", "no"));
-+}
-+
- static int cmd_setportnetwork(int argc, char *const *argv)
- {
-     int br_index = get_index(argv[1], "bridge");
-@@ -2264,6 +2309,10 @@ static const struct command commands[] =
-      "<bridge> <port> {yes|no}", "Disable/Enable sending BPDU"},
-     {3, 0, "setportbpdufilter", cmd_setportbpdufilter,
-      "<bridge> <port> {yes|no}", "Set BPDU filter state"},
-+    {3, 0, "setportpvstfilter", cmd_setportpvstfilter,
-+     "<bridge> <port> {yes|no}", "Set PVST filter state"},
-+    {3, 0, "setpvstguard", cmd_setportpvstguard,
-+     "<bridge> <port> {yes|no}", "Set PVST guard state"},
- 
-     /* Other */
-     {1, 0, "debuglevel", cmd_debuglevel, "<level>", "Level of verbosity"},
+ #endif /* PACKET_SOCK_H */
+diff --git a/utils/bash_completion b/utils/bash_completion
+index 26edea6..3dd2d10 100644
 --- a/utils/bash_completion
 +++ b/utils/bash_completion
 @@ -17,7 +17,8 @@ _mstpctl()
@@ -517,47 +565,3 @@
                      COMPREPLY=( $( compgen -W 'yes no' -- "$cur" ) )
                      ;;
                  setportp2p)
---- a/main.c
-+++ b/main.c
-@@ -38,12 +38,12 @@
- #include "epoll_loop.h"
- #include "bridge_ctl.h"
- #include "netif_utils.h"
--#include "packet.h"
- #include "log.h"
- #include "mstp.h"
- #include "ctl_socket_server.h"
- #include "driver.h"
- #include "bridge_track.h"
-+#include "packet.h"
- 
- #define APP_NAME    "mstpd"
- 
---- a/packet.h
-+++ b/packet.h
-@@ -26,8 +26,12 @@
- #define PACKET_SOCK_H
- 
- #include <sys/uio.h>
-+#include <net/ethernet.h>
- 
- void packet_send(int ifindex, const struct iovec *iov, int iov_count, int len);
- int packet_sock_init(void);
- 
-+void packet_sock_mcast_del(const port_t *prt, const struct ether_addr *mcaddr);
-+int packet_sock_mcast_add(const port_t *prt, const struct ether_addr *mcaddr);
-+
- #endif /* PACKET_SOCK_H */
---- a/bridge_track.h
-+++ b/bridge_track.h
-@@ -21,6 +21,10 @@
- #ifndef MSTPD_BRIDGE_TRACK_H
- #define MSTPD_BRIDGE_TRACK_H
- 
-+#include <net/ethernet.h>
-+
-+const struct ether_addr pvst_group_address;
-+
- int bridge_track_fini(void);
- 
- #endif

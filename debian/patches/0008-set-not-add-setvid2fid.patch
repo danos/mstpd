@@ -1,6 +1,16 @@
+From: Vyatta Package Maintainers <DL-vyatta-help@att.com>
+Date: Tue, 23 Mar 2021 14:25:52 +0000
+Subject: set-not-add-setvid2fid
+
+---
+ mstp.c | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/mstp.c b/mstp.c
+index cd579fc..b74ec7e 100644
 --- a/mstp.c
 +++ b/mstp.c
-@@ -1296,13 +1296,31 @@ bool MSTP_IN_set_all_vids2fids(bridge_t
+@@ -1319,13 +1319,31 @@ bool MSTP_IN_set_all_vids2fids(bridge_t *br, __u16 *vids2fids)
  {
      bool vid2mstid_changed;
      int vid;
@@ -8,11 +18,11 @@
  
 +    memset(fidmatch, 0, sizeof(fidmatch));
      vid2mstid_changed = false;
-     for(vid = 1; vid <= MAX_VID; ++vid)
++    for(vid = 1; vid <= MAX_VID; ++vid)
 +        if (vids2fids[vid] <= MAX_FID)
 +            fidmatch[vids2fids[vid]] = true;
 +
-+    for(vid = 1; vid <= MAX_VID; ++vid)
+     for(vid = 1; vid <= MAX_VID; ++vid)
      {
          if(vids2fids[vid] > MAX_FID)
 -        { /* Incorrect value == keep prev value */

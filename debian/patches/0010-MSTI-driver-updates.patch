@@ -1,3 +1,45 @@
+From: Vyatta Package Maintainers <DL-vyatta-help@att.com>
+Date: Tue, 23 Mar 2021 14:25:52 +0000
+Subject: MSTI-driver-updates
+
+---
+ Makefile.am   |   4 ++
+ configure.ac  |   4 ++
+ driver_deps.c | 223 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 224 insertions(+), 7 deletions(-)
+
+diff --git a/Makefile.am b/Makefile.am
+index e37c3a7..97af4c1 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -30,6 +30,10 @@ configbridgefile=$(utilsdir)/mstp_config_bridge
+ ifqueryfile=$(utilsdir)/ifquery
+ 
+ mstpd_CFLAGS += -DMSTPD_PID_FILE='"$(mstpdpidfile)"'
++mstpd_CFLAGS += $(LIBCZMQ_CFLAGS)
++mstpd_CFLAGS += $(LIBVPLANED_CFLAGS)
++mstpd_LDADD = $(LIBCZMQ_LIBS)
++mstpd_LDADD += $(LIBVPLANED_LIBS) $(JSON_C_LIBS)
+ 
+ # See https://www.gnu.org/savannah-checkouts/gnu/autoconf/manual/autoconf-2.69/html_node/Installation-Directory-Variables.html#index-sysconfdir-188
+ populate_template = sed \
+diff --git a/configure.ac b/configure.ac
+index b6ce2ff..34a8fbb 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -82,6 +82,10 @@ AC_SEARCH_LIBS([clock_gettime], [rt])
+ AC_CHECK_TYPES(struct timespec)
+ AC_CHECK_FUNCS(clock_gettime)
+ 
++PKG_CHECK_MODULES(LIBCZMQ, [libczmq >= 3.0.2])
++PKG_CHECK_MODULES(LIBVPLANED, [libvplaned])
++PKG_CHECK_MODULES(JSON_C, [json-c])
++
+ AC_CONFIG_HEADERS([config.h])
+ AC_CONFIG_FILES([Makefile])
+ 
+diff --git a/driver_deps.c b/driver_deps.c
+index 418d484..35626ce 100644
 --- a/driver_deps.c
 +++ b/driver_deps.c
 @@ -13,20 +13,173 @@
@@ -275,30 +317,4 @@
 +
      MSTP_IN_all_fids_flushed(ptp);
  }
- 
---- a/Makefile.am
-+++ b/Makefile.am
-@@ -30,6 +30,10 @@ configbridgefile=$(utilsdir)/mstp_config
- ifqueryfile=$(utilsdir)/ifquery
- 
- mstpd_CFLAGS += -DMSTPD_PID_FILE='"$(mstpdpidfile)"'
-+mstpd_CFLAGS += $(LIBCZMQ_CFLAGS)
-+mstpd_CFLAGS += $(LIBVPLANED_CFLAGS)
-+mstpd_LDADD = $(LIBCZMQ_LIBS)
-+mstpd_LDADD += $(LIBVPLANED_LIBS) $(JSON_C_LIBS)
- 
- # See https://www.gnu.org/savannah-checkouts/gnu/autoconf/manual/autoconf-2.69/html_node/Installation-Directory-Variables.html#index-sysconfdir-188
- populate_template = sed \
---- a/configure.ac
-+++ b/configure.ac
-@@ -72,6 +72,10 @@ AC_SEARCH_LIBS([clock_gettime], [rt])
- AC_CHECK_TYPES(struct timespec)
- AC_CHECK_FUNCS(clock_gettime)
- 
-+PKG_CHECK_MODULES(LIBCZMQ, [libczmq >= 3.0.2])
-+PKG_CHECK_MODULES(LIBVPLANED, [libvplaned])
-+PKG_CHECK_MODULES(JSON_C, [json-c])
-+
- AC_CONFIG_HEADERS([config.h])
- AC_CONFIG_FILES([Makefile])
  
